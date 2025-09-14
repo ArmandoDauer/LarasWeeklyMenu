@@ -373,14 +373,19 @@ function drawTable(){
   });
 }
 
-/* ---------- Exportar PDF ---------- */
-document.getElementById('exportBtn').addEventListener('click', async ()=>{
+document.getElementById('exportBtn').addEventListener('click', exportPDF);
+
+async function exportPDF(){
+  // 1) Monta o DOM de impressão
   const print = document.getElementById('printArea');
   print.innerHTML = '';
-  const title = document.createElement('h2'); title.textContent = "Lara’s Weekly Menu — Exportação"; print.appendChild(title);
+  const title = document.createElement('h2');
+  title.textContent = "Lara’s Weekly Menu — Exportação";
+  print.appendChild(title);
 
   DAYS.forEach(day=>{
     const dayH = document.createElement('h3'); dayH.textContent = day; print.appendChild(dayH);
+
     let dayTotal = 0;
     MEALS.forEach(meal=>{
       const items = selections[day][meal];
@@ -408,25 +413,65 @@ document.getElementById('exportBtn').addEventListener('click', async ()=>{
     print.appendChild(t);
   });
 
-  const { jsPDF } = window.jspdf;
-  const pdf = new jsPDF({unit:'pt', format:'a4'});
-  const pageW = pdf.internal.pageSize.getWidth(), margin = 24;
-  const canvas = await html2canvas(print, {scale:2, backgroundColor:'#ffffff'});
-  const pageH = pdf.internal.pageSize.getHeight() - margin*2;
-  let sY = 0;
-  while(sY < canvas.height){
-    const sliceH = Math.min(canvas.height - sY, Math.floor(pageH * canvas.width / (pageW - margin*2)));
-    const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = canvas.width; pageCanvas.height = sliceH;
-    pageCanvas.getContext('2d').drawImage(canvas, 0, sY, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
-    const pageImg = pageCanvas.toDataURL('image/png');
-    if(sY>0) pdf.addPage();
-    pdf.addImage(pageImg, 'PNG', margin, margin, pageW - margin*2, sliceH * (pageW - margin*2) / canvas.width, undefined, 'FAST');
-    sY += sliceH;
+  // 2) Garante que tudo está pronto para o html2canvas
+  if (document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch {}
   }
-  pdf.save('Cardapio_Semanal.pdf');
-});
+  await new Promise(r => requestAnimationFrame(()=>requestAnimationFrame(r)));
 
+  // 3) Captura em alta resolução
+  const dpr = Math.min(window.devicePixelRatio || 1, 2); // evita PDF gigante
+  const canvas = await html2canvas(print, {
+    scale: 2 * dpr,   // nítido
+    backgroundColor: '#ffffff',
+    useCORS: true
+  });
+
+  // 4) Paginação robusta em A4
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 36; // 0,5"
+  const usableW = pageW - margin*2;
+  const ratio = usableW / canvas.width;
+  const renderedH = canvas.height * ratio; // altura total em pontos se fosse 1 página
+  const sliceH_pts = pageH - margin*2;     // altura útil por página (em pontos)
+
+  // Se cabe numa página, simples:
+  if (renderedH <= sliceH_pts) {
+    const img = canvas.toDataURL('image/png');
+    pdf.addImage(img, 'PNG', margin, margin, usableW, renderedH, undefined, 'FAST');
+    pdf.save('Cardapio_Semanal.pdf');
+    return;
+  }
+
+  // Caso contrário, vamos fatiar o canvas em pedaços altos o suficiente para cada página
+  const sliceH_px = Math.floor(sliceH_pts / ratio); // altura do recorte no canvas (px)
+  let sY = 0;
+  let pageIndex = 0;
+
+  while (sY < canvas.height) {
+    const partH = Math.min(sliceH_px, canvas.height - sY);
+
+    // cria um canvas temporário com o recorte
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = partH;
+    const ctx = pageCanvas.getContext('2d');
+    ctx.drawImage(canvas, 0, sY, canvas.width, partH, 0, 0, canvas.width, partH);
+
+    const img = pageCanvas.toDataURL('image/png');
+    if (pageIndex > 0) pdf.addPage();
+    const imgH_pts = partH * ratio;
+    pdf.addImage(img, 'PNG', margin, margin, usableW, imgH_pts, undefined, 'FAST');
+
+    sY += partH;
+    pageIndex++;
+  }
+
+  pdf.save('Cardapio_Semanal.pdf');
+}
 /* ---------- Limpar ---------- */
 document.getElementById('clearBtn').addEventListener('click', ()=>{
   if(!confirm('Limpar todas as seleções?')) return;
