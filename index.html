@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lara's Weekly Menu</title>
+
+  <!-- SheetJS para ler Excel; html2canvas + jsPDF para exportar PDF -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#f7f6f4; --ink:#0e2a3f; --muted:#6b7785; --pill:#e8eef5; --brand:#2f5d87; --ring:#93b4d6;
+      --card:#ffffff; --shadow:0 10px 25px rgba(0,0,0,.06); --radius:16px; --danger:#c53b3b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0; font-family:Inter, system-ui, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--ink)}
+    .container{max-width:1100px; margin:32px auto 80px; padding:0 20px}
+    header h1{font-size:42px; margin:0 0 10px}
+    header p{color:var(--muted); margin:0 0 18px}
+
+    .controls{display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 18px}
+    .group{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+    .label{font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-right:6px}
+
+    .pill{border:none; background:var(--pill); color:var(--ink); padding:10px 14px; border-radius:999px; cursor:pointer; font-weight:600; transition:all .15s}
+    .pill:hover{filter:brightness(.96)}
+    .pill.active{background:var(--brand); color:#fff; box-shadow:0 0 0 3px var(--ring)}
+    .hidden{display:none !important}
+
+    .notice{background:var(--card); border-radius:var(--radius); padding:12px 14px; box-shadow:var(--shadow); color:var(--muted); margin:12px 0 20px}
+
+    .carousel{display:flex; gap:14px; overflow-x:auto; padding:6px; scroll-snap-type:x mandatory}
+    .carousel::-webkit-scrollbar{height:10px}
+    .carousel::-webkit-scrollbar-thumb{background:#c9d7e6; border-radius:999px}
+    .card{scroll-snap-align:start; background:var(--card); border-radius:18px; box-shadow:var(--shadow); min-width:250px; max-width:250px; overflow:hidden; display:flex; flex-direction:column}
+    .card img{width:100%; height:150px; object-fit:cover; background:#e9eef3}
+    .card .body{padding:12px 12px 14px}
+    .card h4{margin:6px 0 2px; font-size:16px}
+    .kcal{color:var(--muted); font-size:14px}
+    .qtyRow{display:flex; align-items:center; gap:8px; margin-top:8px}
+    .step{border:none; background:var(--pill); padding:8px 10px; border-radius:10px; font-weight:800; cursor:pointer}
+    .grams{min-width:70px; text-align:center; font-weight:700}
+    .addBtn{margin-top:10px; width:100%; border:none; padding:10px 12px; border-radius:10px; background:var(--brand); color:#fff; font-weight:700; cursor:pointer}
+
+    .gridWrap{background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); margin-top:26px; overflow:auto}
+    table{width:100%; border-collapse:separate; border-spacing:0}
+    thead th{position:sticky; top:0; background:#eff4f9; z-index:1}
+    th, td{padding:12px; border-bottom:1px solid #e8edf4; vertical-align:top}
+    thead th:first-child{border-top-left-radius:var(--radius)}
+    thead th:last-child{border-top-right-radius:var(--radius)}
+    tbody td:first-child{background:#fafcff; width:180px; font-weight:700}
+    .mealItem{display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:6px; border:1px dashed #e6edf5; border-radius:12px}
+    .mealItem img{width:32px; height:32px; border-radius:8px; object-fit:cover}
+    .cellTotal{color:var(--muted); font-size:13px; margin-top:6px}
+    .trash{border:none; background:#ffeaea; color:var(--danger); border-radius:10px; cursor:pointer; padding:6px 8px; display:flex; align-items:center; justify-content:center}
+    .trash svg{width:16px; height:16px}
+    tfoot td{background:#f5f8fc; font-weight:800}
+    .dailyTotal{font-weight:800}
+
+    .actions{display:flex; gap:10px; margin-top:20px}
+    .primary{background:var(--brand); color:#fff; border:none; padding:14px 18px; border-radius:999px; font-weight:800; cursor:pointer}
+    .secondary{background:var(--pill); color:var(--ink); border:none; padding:14px 18px; border-radius:999px; font-weight:800; cursor:pointer}
+
+    #printArea{padding:24px; background:#fff; color:#000; width:800px}
+    #printArea h2{margin:0 0 10px}
+    #printArea h3{margin:16px 0 6px}
+    #printArea .muted{color:#555}
+    @media (max-width:700px){
+      header h1{font-size:32px}
+      tbody td:first-child{width:130px}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Lara’s Weekly Menu</h1>
+      <p class="muted">O Excel <b>menu.xlsx</b> é carregado automaticamente. Selecione o <b>dia</b>, depois a <b>refeição</b> e, quando aplicável, a <b>categoria</b>. Defina a <b>quantidade</b> no cartão antes de adicionar.</p>
+    </header>
+
+    <div id="notice" class="notice">Procurando <b>menu.xlsx</b> na mesma pasta…</div>
+
+    <!-- Seletores -->
+    <div class="controls">
+      <div class="group" id="daysGroup" aria-label="Selecionar dia">
+        <span class="label">Dia</span>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="group" id="mealsGroup" aria-label="Selecionar refeição">
+        <span class="label">Refeição</span>
+      </div>
+    </div>
+    <div class="controls" id="catsRow">
+      <div class="group" id="catsGroup" aria-label="Selecionar categoria">
+        <span class="label">Categoria</span>
+      </div>
+    </div>
+
+    <!-- Carrossel -->
+    <section>
+      <div id="carousel" class="carousel" aria-live="polite"></div>
+      <p id="emptyHint" class="muted" style="margin:10px 6px;">Coloque o arquivo <code>menu.xlsx</code> na mesma pasta do site.</p>
+    </section>
+
+    <!-- Grade semanal -->
+    <section class="gridWrap" id="gridSection" aria-label="Resumo do cardápio">
+      <table id="weekTable">
+        <thead>
+          <tr>
+            <th>Refeição</th>
+            <th>Segunda-feira</th>
+            <th>Terça-feira</th>
+            <th>Quarta-feira</th>
+            <th>Quinta-feira</th>
+            <th>Sexta-feira</th>
+            <th>Sábado</th>
+            <th>Domingo</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+        <tfoot>
+          <tr>
+            <td>Total diário (kcal)</td>
+            <td class="dailyTotal" data-day="Segunda-feira">0</td>
+            <td class="dailyTotal" data-day="Terça-feira">0</td>
+            <td class="dailyTotal" data-day="Quarta-feira">0</td>
+            <td class="dailyTotal" data-day="Quinta-feira">0</td>
+            <td class="dailyTotal" data-day="Sexta-feira">0</td>
+            <td class="dailyTotal" data-day="Sábado">0</td>
+            <td class="dailyTotal" data-day="Domingo">0</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+
+    <div class="actions">
+      <button class="secondary" id="clearBtn">Limpar Seleções</button>
+      <button class="primary" id="exportBtn">Exportar Cardápio (PDF)</button>
+    </div>
+  </div>
+
+  <div id="printArea" class="hidden"></div>
+
+<script>
+/* ---------- Dados e Estado ---------- */
+const DAYS = ["Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado","Domingo"];
+const MEALS = ["Café da Manhã","Lanche Manhã","Almoço","Lanche Tarde","Jantar"];
+const CATS = ["Proteina","Carboidrato","Verduras"]; // só para Almoço/Jantar
+
+let ITEMS = []; // {nome, refeicao, categoria?, kcal100}
+
+let selectedDay = DAYS[0];
+let selectedMeal = MEALS[0];
+let selectedCat = null;
+
+// selections[day][meal] = [{nome, grams, kcal, kcal100, imagem}]
+const selections = {};
+DAYS.forEach(d => { selections[d] = {}; MEALS.forEach(m => selections[d][m] = []); });
+
+/* ---------- UI refs ---------- */
+const daysGroup = document.getElementById('daysGroup');
+const mealsGroup = document.getElementById('mealsGroup');
+const catsGroup = document.getElementById('catsGroup');
+const catsRow   = document.getElementById('catsRow');
+const carousel  = document.getElementById('carousel');
+const emptyHint = document.getElementById('emptyHint');
+const tbody     = document.getElementById('tbody');
+const notice    = document.getElementById('notice');
+
+/* ---------- Selectors ---------- */
+function buildPills(){
+  DAYS.forEach(d=>{
+    const b = document.createElement('button');
+    b.className='pill'; b.textContent=d;
+    if(d===selectedDay) b.classList.add('active');
+    b.onclick=()=>{ selectedDay=d; syncActive(daysGroup,d); render(); };
+    daysGroup.appendChild(b);
+  });
+  MEALS.forEach(m=>{
+    const b = document.createElement('button');
+    b.className='pill'; b.textContent=m;
+    if(m===selectedMeal) b.classList.add('active');
+    b.onclick=()=>{ selectedMeal=m; syncActive(mealsGroup,m); if(!["Almoço","Jantar"].includes(selectedMeal)) selectedCat=null; render(); };
+    mealsGroup.appendChild(b);
+  });
+  CATS.forEach(c=>{
+    const b = document.createElement('button');
+    b.className='pill'; b.textContent=c;
+    b.onclick=()=>{ selectedCat=c; syncActive(catsGroup,c); render(); };
+    catsGroup.appendChild(b);
+  });
+}
+function syncActive(group, value){
+  [...group.querySelectorAll('.pill')].forEach(el=> el.classList.toggle('active', el.textContent===value));
+}
+
+/* ---------- Carregar Excel automático ---------- */
+async function loadExcelFromPath(path){
+  try{
+    notice.innerHTML = `Carregando <b>${path}</b>…`;
+    const res = await fetch(path, {cache:'no-store'});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+    const norm = (s)=> String(s||'').trim().toLowerCase()
+      .replace(/[áàâã]/g,'a').replace(/[éê]/g,'e').replace(/[í]/g,'i').replace(/[óôõ]/g,'o').replace(/[ú]/g,'u').replace(/[ç]/g,'c');
+
+    ITEMS = rows.map(r=>{
+      const map={}; Object.keys(r).forEach(k=> map[norm(k)] = r[k]);
+      const nome = String(map['nome'] ?? map['alimento'] ?? '').trim();
+      const refeicao = String(map['refeicao'] ?? map['meal'] ?? '').trim() || guessMealFromRow(map);
+      const categoria = String(map['categoria'] ?? map['tipo'] ?? '').trim();
+      const kcal100 = Number(String(map['kcal100'] ?? map['kcal'] ?? map['calorias'] ?? 0).toString().replace(',','.')) || 0;
+      return {nome, refeicao, categoria, kcal100};
+    }).filter(i=>i.nome);
+
+    notice.innerHTML = ITEMS.length
+      ? `✅ Carregado <b>${path}</b> com ${ITEMS.length} itens.`
+      : `⚠️ <b>${path}</b> encontrado, mas sem linhas válidas. Cheque os cabeçalhos: <code>nome</code>, <code>refeicao</code>, <code>categoria</code>, <code>kcal100</code>.`;
+
+    render();
+  }catch(err){
+    console.error(err);
+    notice.innerHTML = `⚠️ Não foi possível carregar <b>${path}</b>. Deixe o arquivo na MESMA pasta do <code>index.html</code>.`;
+    render();
+  }
+}
+function guessMealFromRow(row){
+  const s = JSON.stringify(row).toLowerCase();
+  if(s.includes('almoco') || s.includes('almoço')) return 'Almoço';
+  if(s.includes('jantar')) return 'Jantar';
+  if(s.includes('cafe') || (s.includes('manha') && !s.includes('lanche'))) return 'Café da Manhã';
+  if(s.includes('lanche tarde') || s.includes('tarde')) return 'Lanche Tarde';
+  if(s.includes('lanche') || s.includes('snack')) return 'Lanche Manhã';
+  return '';
+}
+
+/* ---------- Render ---------- */
+function render(){
+  const needsCat = ["Almoço","Jantar"].includes(selectedMeal);
+  catsRow.classList.toggle('hidden', !needsCat);
+  if(!needsCat) syncActive(catsGroup, '');
+
+  const filtered = ITEMS.filter(it=>{
+    if(!it.refeicao) return false;
+    if(normalize(it.refeicao) !== normalize(selectedMeal)) return false;
+    if(needsCat && it.categoria){
+      return normalize(it.categoria) === normalize(selectedCat || '');
+    }
+    return true;
+  });
+
+  carousel.innerHTML='';
+  if(filtered.length===0){
+    emptyHint.textContent = ITEMS.length ? 'Nenhum item para os filtros atuais.' : 'Coloque o arquivo menu.xlsx na mesma pasta do site.';
+    emptyHint.classList.remove('hidden');
+  } else {
+    emptyHint.classList.add('hidden');
+    filtered.forEach(it=> carousel.appendChild(cardForItem(it)));
+  }
+
+  drawTable();
+}
+
+function normalize(s){ return String(s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase(); }
+function imgForName(nome){ return encodeURIComponent(nome) + '.jpg'; }
+
+/* ----- Cartão com controle de quantidade e botão Adicionar ----- */
+function cardForItem(it){
+  const el = document.createElement('article'); el.className='card';
+
+  const img = document.createElement('img'); img.src = imgForName(it.nome); img.alt = it.nome;
+  img.onerror = ()=> { img.src = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300">
+      <rect width="100%" height="100%" fill="#e9eef3"/>
+      <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#7b8aa1" font-family="Arial" font-size="20">sem imagem</text>
+    </svg>`
+  ); };
+
+  const body = document.createElement('div'); body.className='body';
+  const h4 = document.createElement('h4'); h4.textContent = it.nome;
+  const kcal = document.createElement('div'); kcal.className='kcal'; kcal.textContent = `${it.kcal100} kcal / 100g`;
+
+  // Controle de quantidade
+  let grams = 100; // valor inicial
+  const qtyRow = document.createElement('div'); qtyRow.className='qtyRow';
+  const minus = document.createElement('button'); minus.className='step'; minus.textContent='−';
+  const gramsEl = document.createElement('div'); gramsEl.className='grams'; gramsEl.textContent = `${grams} g`;
+  const plus = document.createElement('button'); plus.className='step'; plus.textContent='+';
+  minus.onclick = ()=>{ grams = Math.max(10, grams-10); gramsEl.textContent = `${grams} g`; };
+  plus.onclick  = ()=>{ grams = Math.min(1000, grams+10); gramsEl.textContent = `${grams} g`; };
+
+  qtyRow.append(minus, gramsEl, plus);
+
+  const btn = document.createElement('button'); btn.className='addBtn'; btn.textContent='Adicionar';
+  btn.onclick = ()=>{
+    const kcalValue = Math.round((Number(it.kcal100)||0) * grams / 100);
+    selections[selectedDay][selectedMeal].push({
+      nome: it.nome,
+      grams,
+      kcal: kcalValue,
+      kcal100: Number(it.kcal100)||0,
+      imagem: imgForName(it.nome)
+    });
+    drawTable();
+  };
+
+  body.append(h4, kcal, qtyRow, btn);
+  el.append(img, body);
+  return el;
+}
+
+/* ----- Remover item ----- */
+function removeItem(day, meal, idx){
+  selections[day][meal].splice(idx,1);
+  drawTable();
+}
+
+/* ----- Tabela / Totais ----- */
+function drawTable(){
+  tbody.innerHTML='';
+  MEALS.forEach(meal=>{
+    const tr = document.createElement('tr');
+    const th = document.createElement('td'); th.textContent = meal; tr.appendChild(th);
+
+    DAYS.forEach(day=>{
+      const td = document.createElement('td');
+      const list = selections[day][meal]; let sum = 0;
+
+      list.forEach((item, idx)=>{
+        sum += (Number(item.kcal)||0);
+
+        const row = document.createElement('div'); row.className='mealItem';
+
+        const img = document.createElement('img'); img.src=item.imagem; img.alt=item.nome; img.onerror = ()=> img.style.visibility='hidden';
+
+        const txt = document.createElement('div');
+        txt.innerHTML = `<strong>${item.nome}</strong><br><span class="kcal">${item.grams} g — ${item.kcal} kcal</span>`;
+
+        const del = document.createElement('button'); del.className='trash'; del.title='Remover';
+        del.innerHTML = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M9 3h6a1 1 0 0 1 1 1v1h4v2h-1v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7H4V5h4V4a1 1 0 0 1 1-1zm1 4H7v13h10V7h-3H10zm-1-2h6V5h-6v0z"/>
+        </svg>`;
+        del.onclick=()=> removeItem(day, meal, idx);
+
+        row.append(img, txt, del);
+        td.appendChild(row);
+      });
+
+      const total = document.createElement('div'); total.className='cellTotal';
+      total.textContent = `Total ${meal.toLowerCase()}: ${sum} kcal`;
+      td.appendChild(total);
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  // Totais por dia
+  DAYS.forEach(day=>{
+    const daily = document.querySelector(`.dailyTotal[data-day="${day}"]`);
+    let sum = 0;
+    MEALS.forEach(meal=>{
+      sum += selections[day][meal].reduce((a, it)=> a + (Number(it.kcal)||0), 0);
+    });
+    if(daily) daily.textContent = sum;
+  });
+}
+
+/* ---------- Exportar PDF ---------- */
+document.getElementById('exportBtn').addEventListener('click', async ()=>{
+  const print = document.getElementById('printArea');
+  print.innerHTML = '';
+  const title = document.createElement('h2'); title.textContent = "Lara’s Weekly Menu — Exportação"; print.appendChild(title);
+
+  DAYS.forEach(day=>{
+    const dayH = document.createElement('h3'); dayH.textContent = day; print.appendChild(dayH);
+    let dayTotal = 0;
+    MEALS.forEach(meal=>{
+      const items = selections[day][meal];
+      const sec = document.createElement('div');
+      const h = document.createElement('strong'); h.textContent = meal; sec.appendChild(h);
+
+      if(items.length===0){
+        const m = document.createElement('div'); m.className='muted'; m.textContent='—'; sec.appendChild(m);
+      } else {
+        const ul = document.createElement('ul');
+        items.forEach(it=>{
+          const li = document.createElement('li');
+          li.textContent = `${it.nome} — ${it.grams} g — ${it.kcal} kcal`;
+          ul.appendChild(li);
+          dayTotal += (Number(it.kcal)||0);
+        });
+        sec.appendChild(ul);
+      }
+      print.appendChild(sec);
+    });
+
+    const t = document.createElement('div');
+    t.style.marginTop='6px';
+    t.innerHTML = `<em>Total do dia: <strong>${dayTotal} kcal</strong></em>`;
+    print.appendChild(t);
+  });
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({unit:'pt', format:'a4'});
+  const pageW = pdf.internal.pageSize.getWidth(), margin = 24;
+  const canvas = await html2canvas(print, {scale:2, backgroundColor:'#ffffff'});
+  const pageH = pdf.internal.pageSize.getHeight() - margin*2;
+  let sY = 0;
+  while(sY < canvas.height){
+    const sliceH = Math.min(canvas.height - sY, Math.floor(pageH * canvas.width / (pageW - margin*2)));
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = canvas.width; pageCanvas.height = sliceH;
+    pageCanvas.getContext('2d').drawImage(canvas, 0, sY, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+    const pageImg = pageCanvas.toDataURL('image/png');
+    if(sY>0) pdf.addPage();
+    pdf.addImage(pageImg, 'PNG', margin, margin, pageW - margin*2, sliceH * (pageW - margin*2) / canvas.width, undefined, 'FAST');
+    sY += sliceH;
+  }
+  pdf.save('Cardapio_Semanal.pdf');
+});
+
+/* ---------- Limpar ---------- */
+document.getElementById('clearBtn').addEventListener('click', ()=>{
+  if(!confirm('Limpar todas as seleções?')) return;
+  DAYS.forEach(d=> MEALS.forEach(m=> selections[d][m]=[]));
+  drawTable();
+});
+
+/* ---------- Init ---------- */
+buildPills();
+render();
+loadExcelFromPath('menu.xlsx'); // carrega automaticamente
+</script>
+</body>
+</html>
