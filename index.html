@@ -373,102 +373,79 @@ function drawTable(){
   });
 }
 
-document.getElementById('exportBtn').addEventListener('click', exportPDF);
+document.getElementById('exportBtn').onclick = exportPDFList;
 
-async function exportPDF(){
-  // 1) Monta o DOM de impressão
-  const print = document.getElementById('printArea');
-  print.innerHTML = '';
-  const title = document.createElement('h2');
-  title.textContent = "Lara’s Weekly Menu — Exportação";
-  print.appendChild(title);
-
-  DAYS.forEach(day=>{
-    const dayH = document.createElement('h3'); dayH.textContent = day; print.appendChild(dayH);
-
-    let dayTotal = 0;
-    MEALS.forEach(meal=>{
-      const items = selections[day][meal];
-      const sec = document.createElement('div');
-      const h = document.createElement('strong'); h.textContent = meal; sec.appendChild(h);
-
-      if(items.length===0){
-        const m = document.createElement('div'); m.className='muted'; m.textContent='—'; sec.appendChild(m);
-      } else {
-        const ul = document.createElement('ul');
-        items.forEach(it=>{
-          const li = document.createElement('li');
-          li.textContent = `${it.nome} — ${it.grams} g — ${it.kcal} kcal`;
-          ul.appendChild(li);
-          dayTotal += (Number(it.kcal)||0);
-        });
-        sec.appendChild(ul);
-      }
-      print.appendChild(sec);
-    });
-
-    const t = document.createElement('div');
-    t.style.marginTop='6px';
-    t.innerHTML = `<em>Total do dia: <strong>${dayTotal} kcal</strong></em>`;
-    print.appendChild(t);
-  });
-
-  // 2) Garante que tudo está pronto para o html2canvas
-  if (document.fonts && document.fonts.ready) {
-    try { await document.fonts.ready; } catch {}
-  }
-  await new Promise(r => requestAnimationFrame(()=>requestAnimationFrame(r)));
-
-  // 3) Captura em alta resolução
-  const dpr = Math.min(window.devicePixelRatio || 1, 2); // evita PDF gigante
-  const canvas = await html2canvas(print, {
-    scale: 2 * dpr,   // nítido
-    backgroundColor: '#ffffff',
-    useCORS: true
-  });
-
-  // 4) Paginação robusta em A4
+function exportPDFList(){
   const { jsPDF } = window.jspdf;
-  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pdf = new jsPDF({ unit:'pt', format:'a4' });
+
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
-  const margin = 36; // 0,5"
-  const usableW = pageW - margin*2;
-  const ratio = usableW / canvas.width;
-  const renderedH = canvas.height * ratio; // altura total em pontos se fosse 1 página
-  const sliceH_pts = pageH - margin*2;     // altura útil por página (em pontos)
+  const margin = 40;
+  const maxWidth = pageW - margin * 2;
 
-  // Se cabe numa página, simples:
-  if (renderedH <= sliceH_pts) {
-    const img = canvas.toDataURL('image/png');
-    pdf.addImage(img, 'PNG', margin, margin, usableW, renderedH, undefined, 'FAST');
-    pdf.save('Cardapio_Semanal.pdf');
-    return;
+  let y = margin;
+  const lh = 16; // line height
+
+  function br(extra = 8){
+    y += extra;
+    if (y > pageH - margin){
+      pdf.addPage();
+      y = margin;
+    }
+  }
+  function addLines(lines, fontSize=12, bold=false){
+    pdf.setFont('Helvetica', bold ? 'bold' : 'normal');
+    pdf.setFontSize(fontSize);
+    const chunks = Array.isArray(lines) ? lines : [String(lines)];
+    for (const t of chunks){
+      const wrapped = pdf.splitTextToSize(String(t), maxWidth);
+      for (const line of wrapped){
+        if (y + lh > pageH - margin){ pdf.addPage(); y = margin; }
+        pdf.text(line, margin, y);
+        y += lh;
+      }
+    }
+  }
+  function hr(){
+    pdf.setDrawColor(220);
+    pdf.line(margin, y, pageW - margin, y);
+    br(10);
   }
 
-  // Caso contrário, vamos fatiar o canvas em pedaços altos o suficiente para cada página
-  const sliceH_px = Math.floor(sliceH_pts / ratio); // altura do recorte no canvas (px)
-  let sY = 0;
-  let pageIndex = 0;
+  // Título
+  addLines("Lara’s Weekly Menu — Exportação", 18, true);
+  br(6);
 
-  while (sY < canvas.height) {
-    const partH = Math.min(sliceH_px, canvas.height - sY);
+  // Conteúdo: por dia e refeição
+  DAYS.forEach((day, di)=>{
+    addLines(day, 16, true);
+    br(2);
 
-    // cria um canvas temporário com o recorte
-    const pageCanvas = document.createElement('canvas');
-    pageCanvas.width = canvas.width;
-    pageCanvas.height = partH;
-    const ctx = pageCanvas.getContext('2d');
-    ctx.drawImage(canvas, 0, sY, canvas.width, partH, 0, 0, canvas.width, partH);
+    let totalDia = 0;
 
-    const img = pageCanvas.toDataURL('image/png');
-    if (pageIndex > 0) pdf.addPage();
-    const imgH_pts = partH * ratio;
-    pdf.addImage(img, 'PNG', margin, margin, usableW, imgH_pts, undefined, 'FAST');
+    MEALS.forEach(meal=>{
+      addLines(meal, 13, true);
 
-    sY += partH;
-    pageIndex++;
-  }
+      const items = selections[day][meal] || [];
+      if (items.length === 0){
+        addLines("—");
+      } else {
+        let subtotal = 0;
+        items.forEach(it=>{
+          const line = `• ${it.nome} — ${it.grams ?? 100} g — ${it.kcal ?? Math.round((Number(it.kcal100)||0))} kcal`;
+          addLines(line);
+          subtotal += Number(it.kcal)||0;
+        });
+        addLines(`Subtotal ${meal.toLowerCase()}: ${subtotal} kcal`, 12, false);
+        totalDia += subtotal;
+      }
+      br(6);
+    });
+
+    addLines(`Total do dia: ${totalDia} kcal`, 13, true);
+    if (di < DAYS.length - 1){ br(4); hr(); }
+  });
 
   pdf.save('Cardapio_Semanal.pdf');
 }
